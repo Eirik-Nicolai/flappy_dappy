@@ -1,0 +1,13 @@
+[package]
+name = "flappydappy"
+version = "0.1.0"
+edition = "2021"
+features = ["cargo-resource-root"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ggez = "0.7"
+specs = { version = "0.16.1", features = ["specs-derive"] }
+glam = { version = "0.20", features = ["mint"]}
+rand = "0.7"
