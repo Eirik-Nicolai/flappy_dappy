@@ -3,6 +3,7 @@ mod animation;
 use std::time::Duration;
 use std::{path};
 
+use ggez::audio::SoundSource;
 use ggez::graphics::spritebatch::SpriteBatch;
 use glam::*;
 use rand::*;
@@ -17,9 +18,9 @@ type Point2 = Vec2;
 
 // DEBUGGING 
 const SHOW_HITBOXES:bool = false;
-const RUN_SYS_MOVEMENT:bool = false;
-const RUN_SYS_COLLISION:bool = false;
-const RUN_SYS_OBSTACLES:bool = false;
+const RUN_SYS_MOVEMENT:bool = true;
+const RUN_SYS_COLLISION:bool = true;
+const RUN_SYS_OBSTACLES:bool = true;
 
 
 const OBST_AMOUNT:u8 = 3;
@@ -27,7 +28,7 @@ const OBST_AMOUNT:u8 = 3;
 const WINDOW_H:f32 = 1100.0;
 const WINDOW_W:f32 = 1000.0;
 
-const SQUARE_SIZE:f32 = 80.0;
+const SQUARE_SIZE:f32 = 65.0;
 
 const OBSTACLE_TIGTHFACTOR:f32 = 220.0;
 
@@ -81,6 +82,13 @@ struct Animation
     spritesheet: animation::Spritesheet,
 }
 
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct Sound
+{
+    sounds: Vec<ggez::audio::Source>,
+}
+
 #[derive(Component,Default)]
 #[storage(NullStorage)]
 struct Controllable;
@@ -124,7 +132,7 @@ struct GameState
 }
 impl GameState
 {
-    fn new(_ctx: &mut Context, player_spritesheet: animation::Spritesheet) -> GameResult<GameState>
+    fn new(ctx: &mut Context, player_spritesheet: animation::Spritesheet) -> GameResult<GameState>
     {
         let mut world = World::new();
 
@@ -135,6 +143,7 @@ impl GameState
         
         world.register::<Rect>();
         world.register::<Dirty>();
+        world.register::<Sound>();
         world.register::<Obstacle>();
         world.register::<Velocity>();
         world.register::<Animation>();
@@ -150,6 +159,12 @@ impl GameState
             .with(Controllable)
             .with(Animation {
                 spritesheet: player_spritesheet
+            })
+            .with(Sound {
+                sounds: vec![
+                    audio::Source::new(ctx, "/flap1.mp3").unwrap(),
+                    audio::Source::new(ctx, "/flap2.mp3").unwrap()
+                ]
             })
             .build();
         
@@ -173,7 +188,7 @@ impl GameState
         let gs = GameState {
             state: State::Menu,
             difficulty: 0,
-            obst_sheet: graphics::Image::new(_ctx, "/obst.png").unwrap(),
+            obst_sheet: graphics::Image::new(ctx, "/obst.png").unwrap(),
             ecs: world,
             movement_sys: MovementSystem,
             obstacle_sys: ObstacleSysten,
@@ -199,25 +214,21 @@ impl GameState
             *vel = Velocity { x: 0.0, y: 0.0 };
         }
         
-        let mut rng = rand::thread_rng();
-        for (ent, r, vel, obs) in (&entities, &mut rect, &mut velo, &obst).join()
+        for (ent, r, _) in (&entities, &mut rect, &obst).join()
         {
-            let height_from_ceiling = (WINDOW_H/2.0) * rng.gen_range::<f32, f32, f32>(RNG_LOW, RNG_HIGH);
-            *r = Rect{ pos_x: WINDOW_W+50.0, pos_y: 0.0, size_x: 2.0*SQUARE_SIZE/3.0, size_y: height_from_ceiling - (OBSTACLE_TIGTHFACTOR/2.0)};
-            let v = if obs.0 == 0
-            {
-                OBST_SPEED
-            }
-            else 
-            {
-                0.0
-            };
+            // we're keeping the same height cause im lazy fuck you
+            *r = Rect{ pos_x: WINDOW_W+50.0, pos_y: r.pos_y, size_x: r.size_x, size_y: r.size_y};
             
-            *vel = Velocity { x: v, y: 0.0 };
             if let None = dirty.remove(ent)
             {
                 // nothing happens...
             }
+            if let None = velo.remove(ent)
+            {
+                // nothing happens...
+            }
+            continue;
+        
         }
 
         let mut score = self.ecs.write_resource::<Score>();
@@ -272,11 +283,11 @@ impl ggez::event::EventHandler<GameError> for GameState
                 {
                     self.movement_sys.run_now(&self.ecs);
                 }
-                if RUN_SYS_COLLISION
+                if RUN_SYS_OBSTACLES
                 {
                     self.obstacle_sys.run_now(&self.ecs);
                 }
-                if RUN_SYS_OBSTACLES
+                if RUN_SYS_COLLISION
                 {
                     self.collision_sys.run_now(&self.ecs);
                 }
@@ -555,7 +566,7 @@ impl ggez::event::EventHandler<GameError> for GameState
     
     fn mouse_button_down_event(
         &mut self,
-        _ctx: &mut Context,
+        ctx: &mut Context,
         button: MouseButton,
         _x: f32,
         _y: f32
@@ -574,7 +585,9 @@ impl ggez::event::EventHandler<GameError> for GameState
                         let mut velo = self.ecs.write_storage::<Velocity>();
                         let mut animation = self.ecs.write_storage::<Animation>();
                         let control = self.ecs.read_storage::<Controllable>();
-                        for (vel, _, anim) in (&mut velo, &control, &mut animation).join()
+                        let mut sound = self.ecs.write_storage::<Sound>();
+                        for (vel, _, anim, s) 
+                            in (&mut velo, &control, &mut animation, &mut sound).join()
                         {
                             if vel.y > BIRD_FLAP-(BIRD_FLAP*0.3)// we do an extra chec kto double the jump vel
                             {                                   // so it feels a bit better to control
@@ -585,6 +598,13 @@ impl ggez::event::EventHandler<GameError> for GameState
                                 vel.y -= BIRD_FLAP;
                             }
                             anim.spritesheet.start_animation("flap");
+                            
+                            let mut rng = rand::thread_rng();
+                            let indx = rng.gen_range::<usize,usize,usize>(0, 2);
+                            if let Err(e) = s.sounds[indx].play(ctx)
+                            {
+                                println!("SOUNDS ERROR {e}");
+                            }
                         }
                     },
                     State::GameOver => {
